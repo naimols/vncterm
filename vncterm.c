@@ -1,5 +1,7 @@
 /*
 
+     Modified by Steve Naimoli <steve@naimolinet.com) 2022
+
      Copyright (C) 2007-2011 Proxmox Server Solutions GmbH
 
      Copyright: vzdump is under GNU GPL, the GNU General Public License.
@@ -56,6 +58,7 @@ uint16_t screen_width = 744;
 uint16_t screen_height = 400;
 
 int use_x509 = 1;
+int noauth = 0;
 
 extern int wcwidth (wchar_t wc);
 unsigned char *fontdata;
@@ -319,6 +322,7 @@ tls_initialize_x509_cred(void)
 /* rfb tls security handler */
 
 #define rfbSecTypeVencrypt  19
+#define rfbSecTypeNone  1
 #define rfbVencryptTlsPlain 259
 #define rfbVencryptX509Plain 262
 
@@ -334,6 +338,28 @@ uint32_t rfbDecodeU32(char *data, size_t offset)
 {
 	return ((data[offset] << 24) | (data[offset + 1] << 16) |
 		(data[offset + 2] << 8) | data[offset + 3]);
+}
+
+static void
+rfbVncAuthNone(rfbClientPtr cl)
+{
+        const char *err = NULL;
+        char buf[4096];
+        int n;
+
+        char clientip[INET6_ADDRSTRLEN];
+        clientip[0] = 0;
+        struct sockaddr_in client;
+        socklen_t addrlen = sizeof(client);
+        if (getpeername(cl->sock, &client, &addrlen) == 0) {
+                inet_ntop(client.sin_family, &client.sin_addr,
+                          clientip, sizeof(clientip));
+        }
+
+        rfbEncodeU32(buf, 0); /* Accept auth completion */
+        rfbWriteExact(cl, buf, 4);
+        cl->state = RFB_INITIALISATION;
+        return;
 }
 
 static void
@@ -572,6 +598,12 @@ retry:
 
 	vencrypt_subauth_plain(cl);
 }
+
+static rfbSecurityHandler VncSecurityHandlerNone = {
+	rfbSecTypeNone,
+	rfbVncAuthNone,
+	NULL
+};
 
 static rfbSecurityHandler VncSecurityHandlerVencrypt = {
     rfbSecTypeVencrypt,
@@ -2336,8 +2368,11 @@ create_vncterm (int argc, char** argv, int maxx, int maxy)
   screen->screenData = (void*)vt;
 
   //screen->autoPort = 1;
-
-  if (vncticket) {
+  if (noauth == 1)
+  {
+      rfbRegisterSecurityHandler(&VncSecurityHandlerNone);
+  }
+  else if (vncticket) {
       passwds[0] = vncticket;
       passwds[1] = NULL;
   
@@ -2430,6 +2465,10 @@ main (int argc, char** argv)
           fprintf(stderr, "missing env PVE_VNC_TICKET (-notls)\n");
 	  exit(-1);           
         }
+    } else if (!strcmp (argv[i], "-noauth")) {
+        rfbPurgeArguments(&argc, &i, 1, argv); i--;
+	vncticket = "/dev/null";
+	noauth = 1;
     }
   }
 
